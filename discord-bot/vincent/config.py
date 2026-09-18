@@ -108,8 +108,8 @@ class Config:
                 if p.strip()
             ],
             model=os.getenv("VINCENT_MODEL", "claude-opus-5").strip(),
-            effort=os.getenv("VINCENT_EFFORT", "low").strip(),
-            thinking=os.getenv("VINCENT_THINKING", "off").strip().lower(),
+            effort=os.getenv("VINCENT_EFFORT", "medium").strip(),
+            thinking=os.getenv("VINCENT_THINKING", "adaptive").strip().lower(),
             max_tokens=_int("VINCENT_MAX_TOKENS", 8000),
             use_fallbacks=_bool("VINCENT_FALLBACKS", True),
             db_path=os.getenv("VINCENT_DB", "./data/vincent.db").strip(),
