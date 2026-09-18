@@ -21,19 +21,66 @@
 
 ### 1. 開一個 Discord Bot
 
-1. 去 https://discord.com/developers/applications → **New Application**
-2. 左邊 **Bot** → **Reset Token** → 複製那串 token（只會出現一次）
-3. 同一頁往下，**Privileged Gateway Intents** 把 **MESSAGE CONTENT INTENT** 打開 ← 沒開就收不到訊息
-4. 左邊 **Installation** → Guild install 勾 `bot`，權限給 `Send Messages`；
-   產生的連結拿去把它邀進任何一個伺服器（**私訊要能通，兩邊得有共同伺服器**，
-   自己開一個空伺服器就行）
-5. 回 Discord，設定 → 進階 → 開 **開發者模式**，右鍵自己的頭像 → **複製使用者 ID**
+1. 去 https://discord.com/developers/applications → **New Application**，隨便取個名字
+2. 左邊 **Bot** → **Reset Token** → 複製那串 token（只會出現一次，關掉就要重 reset）
+3. 同一頁往下，**Privileged Gateway Intents** 把 **MESSAGE CONTENT INTENT** 打開
+   ← 沒開就收不到任何訊息內容，這是最常見的卡點
+4. **邀它進一個伺服器** — 見下面第 2 節
+5. 回 Discord，使用者設定 → 進階 → 開 **開發者模式**，
+   然後右鍵自己的頭像 → **複製使用者 ID**（一串 18–19 位數字）
 
-### 2. Anthropic API key
+### 2. 邀它進伺服器
+
+**為什麼要這一步**：Discord 不准 bot 私訊一個跟它沒有共同伺服器的人。
+它不會在伺服器裡講話，那個伺服器只是一張門票。
+
+**先確定你有一個自己開的伺服器。** 沒有的話：Discord 左邊欄最下面的 **＋** →
+**建立我的** → **僅供我和我的朋友使用** → 取個名字 → 建立。你就是擁有者了。
+（別人的伺服器不行，除非你在那邊有管理員權限。）
+
+然後三條路，挑一條：
+
+**A. Installation 頁（現在的預設介面）**
+
+1. 你的 App → 左邊 **Installation**
+2. **Installation Contexts**：勾 **Guild Install**（**User Install** 可以取消）
+3. **Install Link**：選 **Discord Provided Link**
+4. **Default Install Settings** → Guild Install：
+   - **Scopes** 加 `bot`
+   - **Permissions** 加 `Send Messages`、`Read Message History`
+5. 右下 **Save Changes**
+6. 複製上面那條 Install Link → 貼進瀏覽器
+
+**B. OAuth2 URL Generator（舊介面，有些 App 還看得到）**
+
+1. 你的 App → 左邊 **OAuth2** → **URL Generator**
+2. **Scopes** 勾 `bot`
+3. 下面冒出來的 **Bot Permissions** 勾 `Send Messages`、`Read Message History`
+4. 最底下 **Generated URL** 複製
+
+**C. 自己拼網址（最快，上面兩個介面都懶得找就用這個）**
+
+```
+https://discord.com/oauth2/authorize?client_id=你的APPLICATION_ID&permissions=68608&scope=bot
+```
+
+`APPLICATION_ID` 在你的 App → 左邊 **General Information** → **Application ID**，
+按一下就複製。`68608` = 查看頻道 + 傳送訊息 + 讀取訊息紀錄。
+
+**不管走哪一條，最後都一樣**：瀏覽器打開連結 → 上面下拉選你剛開的伺服器 →
+**繼續** → **授權** → 過人機驗證。
+
+成功的樣子：那個伺服器的成員列表裡多出它的名字，掛著 **離線**。
+**離線是對的** —— 你還沒跑 `python run.py`。跑起來它才會變上線。
+
+**最後一個開關**：使用者設定 → **隱私與安全** → 把
+**允許來自伺服器成員的私人訊息** 打開。關著的話它私訊不到你。
+
+### 3. Anthropic API key
 
 https://console.anthropic.com → API Keys → 建一把。這是會扣錢的，往下看費用那段。
 
-### 3. 跑起來
+### 4. 跑起來
 
 ```bash
 cd discord-bot
@@ -132,7 +179,7 @@ VINCENT_WINDOWS=08:00-10:30@0.55,13:00-15:30@0.35,21:00-23:30@0.75
 | 症狀 | 原因 |
 |---|---|
 | 私訊沒反應 | MESSAGE CONTENT INTENT 沒開；或 `VINCENT_OWNER_ID` 填錯（它只理你一個人） |
-| `Cannot send messages to this user` | 你跟它沒有共同伺服器，或你關了「允許來自伺服器成員的私訊」 |
+| `Cannot send messages to this user` | 你跟它沒有共同伺服器（回第 2 節重邀一次），或使用者設定 → 隱私與安全 →「允許來自伺服器成員的私人訊息」關著 |
 | 從來不主動 | 檢查 `VINCENT_INITIATIVE=1`、看 log 裡「今天排定主動開口」那行、確認機器沒睡著 |
 | 「這一則被擋下來了」 | 安全分類器擋的。程式預設開了 server-side fallback 會自動換模型續寫，仍被擋才會看到這句 |
 | 重開之後失憶 | `VINCENT_DB` 指到的檔案沒有持久化（Docker 要掛 volume） |
