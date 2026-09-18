@@ -1,0 +1,5 @@
+.git/
+discord-bot/data/
+discord-bot/.env
+**/__pycache__/
+*.pyc

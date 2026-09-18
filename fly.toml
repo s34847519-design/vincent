@@ -1,0 +1,20 @@
+# Fly.io 部署設定。第一次跑 `fly launch --no-deploy` 時它會問要不要覆寫，選「不要」。
+app = "vincent-bot"          # 全球唯一，被佔用的話換一個
+primary_region = "nrt"       # 東京，離台灣最近
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  VINCENT_TZ = "Asia/Taipei"
+
+# 記憶要存在磁碟上，不然每次重開機就失憶
+[mounts]
+  source = "vincent_data"
+  destination = "/data"
+
+# 沒有 [http_service]——這不是網站，是一個長跑的程式。
+# 也因此 Fly 不會把它自動停掉。
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

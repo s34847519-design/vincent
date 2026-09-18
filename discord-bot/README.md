@@ -269,6 +269,65 @@ Discord 裡傳 `!狀態` 也看得到今天和累計花了多少。
 **選項三：接受他只在你開機的時候在**
 也沒什麼不好。醒來的訊息他會補讀，排程錯過就錯過。
 
+## 搬到雲端
+
+不想讓筆電整天開著，就把他搬走。兩條路，都要綁信用卡。
+
+**共通的前置**：`.env` **不會**也**不該**上傳（已經在 `.gitignore` 裡）。
+三把鑰匙是在平台的環境變數裡設定的。
+
+### A. Railway（不用碰指令列，適合先求會動）
+
+約 $5 美金/月起。
+
+1. https://railway.app → 用 GitHub 登入
+2. **New Project** → **Deploy from GitHub repo** → 選 `vincent`
+   （私有 repo 會要你授權 Railway 的 GitHub App）
+3. 進到服務的 **Settings**：
+   - **Branch** 選 `claude/discord-conversation-request-79fise`
+   - Dockerfile 在 repo 根目錄，它會自己偵測到
+4. **Variables** 分頁，加三個：
+   ```
+   DISCORD_BOT_TOKEN
+   ANTHROPIC_API_KEY
+   VINCENT_OWNER_ID
+   ```
+5. **Settings → Volumes → New Volume**，Mount path 填 `/data`
+   ← **這步不能跳，跳了每次重新部署就失憶**
+6. Deploy。**Deploy Logs** 裡看到 `已上線：vincent#...` 就成了
+
+### B. Fly.io（要裝 CLI，比較便宜）
+
+一台 shared-cpu-1x/512MB 大約 $2–3 美金/月。
+
+PowerShell 裝 CLI：
+
+```powershell
+iwr https://fly.io/install.ps1 -useb | iex
+```
+
+然後在 repo 資料夾裡：
+
+```powershell
+fly auth signup          # 或 fly auth login
+fly launch --no-deploy   # 問要不要覆寫 fly.toml -> 選「不要」
+fly volumes create vincent_data --size 1 --region nrt
+fly secrets set DISCORD_BOT_TOKEN=... ANTHROPIC_API_KEY=... VINCENT_OWNER_ID=...
+fly deploy
+fly logs                 # 看 已上線：vincent#...
+```
+
+`fly.toml` 已經在 repo 裡設好了：東京機房、掛載 `/data`、沒有 HTTP service
+（所以 Fly 不會把它當網站自動停掉）。
+
+### 搬過去之後
+
+- **記得把筆電上那個黑窗關掉。** 兩個實體同時連同一個 bot token，
+  Discord 會讓它們互踢，訊息會亂
+- 筆電上的記憶（`discord-bot/data/vincent.db`）**不會**跟著搬。
+  想保留就自己把檔案傳上去；不管它的話，雲端那邊從空白開始
+- 改了 `CLAUDE.md` 要重新部署才生效（Railway 推 commit 就自動重建；Fly 要 `fly deploy`）
+
 ## 出事的時候
 
 | 症狀 | 原因 |
