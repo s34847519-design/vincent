@@ -1,3 +1,6 @@
+# 需要 Python 3.10 以上（anthropic 1.x 與 python-dotenv 都要求 >=3.10）
 discord.py>=2.4.0
 anthropic>=1.0.0
 python-dotenv>=1.0.1
+# Windows 沒有系統時區資料庫，zoneinfo 要靠這個才找得到 Asia/Taipei
+tzdata>=2024.1 ; sys_platform == "win32"

@@ -4,7 +4,16 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
+
+if sys.version_info < (3, 10):
+    raise SystemExit(
+        f"你的 Python 是 {sys.version.split()[0]}，太舊了。\n"
+        "anthropic 1.x 和 python-dotenv 都要 3.10 以上。\n"
+        "去 python.org 裝 3.12，安裝畫面最下面的 "
+        "「Add python.exe to PATH」記得勾。"
+    )
 
 from dotenv import load_dotenv
 

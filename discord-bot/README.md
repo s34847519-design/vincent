@@ -82,6 +82,16 @@ https://console.anthropic.com → API Keys → 建一把。這是會扣錢的，
 
 ### 4. 跑起來
 
+**需要 Python 3.10 以上。** `anthropic` 1.x 和 `python-dotenv` 都不支援 3.9 以下，
+系統內建的舊 Python 會裝不起來。先確認：
+
+```bash
+python --version
+```
+
+3.9 或更舊 → 去 python.org 裝 3.12（Windows 安裝畫面最下面的
+**Add python.exe to PATH** 一定要勾），裝完**重開終端機**再確認一次。
+
 ```bash
 cd discord-bot
 cp .env.example .env
@@ -89,6 +99,9 @@ cp .env.example .env
 pip install -r requirements.txt
 python run.py
 ```
+
+Windows 另外會裝一個 `tzdata`——Windows 沒有系統時區資料庫，
+少了它 `zoneinfo` 找不到 `Asia/Taipei`，開機就會掛。requirements 裡已經帶了。
 
 看到 `已上線：...` 就可以私訊它了。
 
@@ -183,6 +196,8 @@ VINCENT_WINDOWS=08:00-10:30@0.55,13:00-15:30@0.35,21:00-23:30@0.75
 | 從來不主動 | 檢查 `VINCENT_INITIATIVE=1`、看 log 裡「今天排定主動開口」那行、確認機器沒睡著 |
 | 「這一則被擋下來了」 | 安全分類器擋的。程式預設開了 server-side fallback 會自動換模型續寫，仍被擋才會看到這句 |
 | 重開之後失憶 | `VINCENT_DB` 指到的檔案沒有持久化（Docker 要掛 volume） |
+| `pip install` 失敗、說找不到符合的版本 | Python 太舊。要 3.10 以上，`python --version` 確認 |
+| `ZoneInfoNotFoundError: Asia/Taipei` | Windows 少了時區資料庫，`pip install tzdata` |
 
 ---
 
