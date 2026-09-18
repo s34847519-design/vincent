@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
@@ -55,6 +55,40 @@ class VincentClient(discord.Client):
         log.info("已上線：%s（模型 %s，effort=%s）", self.user, self.cfg.model, self.cfg.effort)
         if self._initiative_task is None:
             self._initiative_task = asyncio.create_task(self.initiative.run_forever())
+        asyncio.create_task(self._catch_up())
+
+    async def _catch_up(self) -> None:
+        """離線期間她傳的訊息，Discord 不會事後補送給機器人——自己回頭去讀。"""
+        last = await self.memory.last_message()
+        if last is None:
+            return  # 全新的記憶，沒有「漏掉」這回事
+
+        channel = await self._resolve_channel()
+        if channel is None or not hasattr(channel, "history"):
+            return
+
+        missed: list[str] = []
+        try:
+            async for msg in channel.history(
+                after=last.ts.astimezone(timezone.utc), limit=100, oldest_first=True
+            ):
+                if msg.author.id != self.cfg.owner_id:
+                    continue
+                text = _clean(msg, self.user)
+                if text and not text.startswith("!"):
+                    missed.append(text)
+        except discord.DiscordException:
+            log.exception("回頭讀離線期間的訊息失敗")
+            return
+
+        if not missed:
+            log.info("離線期間沒有漏掉訊息")
+            return
+
+        log.info("離線期間漏掉 %d 則，補讀回來並回應", len(missed))
+        for text in missed:
+            await self.memory.add("user", text)
+        await self._reply_to_channel(channel)
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.id == getattr(self.user, "id", None):
@@ -86,7 +120,9 @@ class VincentClient(discord.Client):
             await asyncio.sleep(DEBOUNCE_SECONDS)
         except asyncio.CancelledError:
             return  # 她又傳了一則，交給新的 task
+        await self._reply_to_channel(channel)
 
+    async def _reply_to_channel(self, channel: discord.abc.Messageable) -> None:
         async with self._reply_lock:
             try:
                 async with channel.typing():

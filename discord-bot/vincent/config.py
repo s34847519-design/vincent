@@ -82,6 +82,7 @@ class Config:
     max_per_day: int = 3
     idle_hours: int = 20
     recent_skip_minutes: int = 60
+    stale_minutes: int = 90   # 排定時間已過這麼久就不補發（電腦睡著的情況）
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -127,4 +128,5 @@ class Config:
             max_per_day=_int("VINCENT_MAX_PER_DAY", 3),
             idle_hours=_int("VINCENT_IDLE_HOURS", 20),
             recent_skip_minutes=_int("VINCENT_RECENT_SKIP_MIN", 60),
+            stale_minutes=_int("VINCENT_STALE_MIN", 90),
         )

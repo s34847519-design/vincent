@@ -61,12 +61,24 @@ class Initiative:
         due = [t for t in plan if t <= now]
         if due:
             await self._mark_fired(now.date(), due)
-            reason = await self._blocked(now)
-            if reason:
-                log.info("到了排定的時間但先不開口：%s", reason)
+            # 電腦睡著時排程不會跑，醒來才發現「早該發了」——太久以前的就算了，
+            # 早上九點想講的話，晚上十一點才補一句很怪。
+            fresh = [
+                t for t in due
+                if now - t <= timedelta(minutes=self.cfg.stale_minutes)
+            ]
+            if not fresh:
+                log.info(
+                    "排定的 %s 已經過了太久（電腦睡著？），這次跳過不補發",
+                    "、".join(t.strftime("%H:%M") for t in due),
+                )
             else:
-                await self._fire(now, kind="window")
-                return
+                reason = await self._blocked(now)
+                if reason:
+                    log.info("到了排定的時間但先不開口：%s", reason)
+                else:
+                    await self._fire(now, kind="window")
+                    return
 
         await self._idle_check(now)
 
