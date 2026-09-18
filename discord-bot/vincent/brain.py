@@ -14,6 +14,18 @@ log = logging.getLogger("vincent.brain")
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# 每百萬 token 的美金單價（輸入, 輸出）。只是拿來估，帳單以 Anthropic 為準。
+PRICES = {
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-fable-5-1": (10.0, 50.0),
+}
+
+# 關掉思考時補的一句：Opus 5 在 thinking 關閉下偶爾會把內部標籤漏進正文。
+NO_TAGS = "\n\n直接寫回覆本身，不要在輸出裡放任何內部或系統用的 XML 標籤。"
+
 # 她本人沒開口、由程式叫醒時給的指示。包在 <系統提示> 裡，人格設定裡已說明那不是她的話。
 INITIATIVE_DIRECTIVE = """\
 <系統提示>
@@ -56,8 +68,8 @@ class Brain:
         summary: str,
         notes: str,
         now: datetime,
-    ) -> str:
-        """history 的最後一則就是她剛說的話（已經寫進記憶了）。"""
+    ) -> tuple[str, float]:
+        """history 的最後一則就是她剛說的話（已經寫進記憶了）。回 (回覆, 花費美金)。"""
         messages = _to_api(history)
         if not messages:
             raise EmptyHistoryError()
@@ -74,7 +86,7 @@ class Brain:
         notes: str,
         now: datetime,
         extra: str = "",
-    ) -> str:
+    ) -> tuple[str, float]:
         directive = INITIATIVE_DIRECTIVE.format(now=now.strftime("%Y-%m-%d %H:%M"))
         if extra:
             directive = directive.replace("</系統提示>", f"{extra}\n</系統提示>")
@@ -82,7 +94,7 @@ class Brain:
         _append_user(messages, directive)
         return await self._call(messages, summary=summary, notes=notes, now=now)
 
-    async def compress(self, previous: str, batch: list[Message]) -> str:
+    async def compress(self, previous: str, batch: list[Message]) -> tuple[str, float]:
         lines = [
             f"[{m.ts:%Y-%m-%d %H:%M}] {'她' if m.role == 'user' else '文森特'}：{m.content}"
             for m in batch
@@ -93,24 +105,30 @@ class Brain:
             f"這是還沒併進去的新對話：\n<新對話>\n{body}\n</新對話>\n\n"
             "把兩者合併成一份新的摘要，直接輸出摘要本文。"
         )
-        response = await self.client.messages.create(
+        kwargs = dict(
             model=self.cfg.model,
             max_tokens=4000,
             system=SUMMARY_SYSTEM,
             output_config={"effort": "low"},
             messages=[{"role": "user", "content": prompt}],
         )
-        return _first_text(response) or previous
+        if self.cfg.thinking == "off":
+            kwargs["thinking"] = {"type": "disabled"}
+        response = await self.client.messages.create(**kwargs)
+        return _first_text(response) or previous, self._bill(response)
 
     # ── 內部 ──────────────────────────────────────────
 
     def _system(self, *, summary: str, notes: str, now: datetime) -> list[dict]:
         """第一塊是固定人格（吃快取），第二塊放每次都會變的狀態。"""
+        persona = self.persona
+        if self.cfg.thinking == "off":
+            persona += NO_TAGS
         blocks: list[dict] = [
             {
                 "type": "text",
-                "text": self.persona,
-                "cache_control": {"type": "ephemeral"},
+                "text": persona,
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
             }
         ]
 
@@ -124,7 +142,7 @@ class Brain:
 
     async def _call(
         self, messages: list[dict], *, summary: str, notes: str, now: datetime
-    ) -> str:
+    ) -> tuple[str, float]:
         kwargs = dict(
             model=self.cfg.model,
             max_tokens=self.cfg.max_tokens,
@@ -132,6 +150,9 @@ class Brain:
             output_config={"effort": self.cfg.effort},
             messages=messages,
         )
+        if self.cfg.thinking == "off":
+            # Opus 5 預設會思考，而思考 token 按輸出價計費——聊天用不上，關掉省最多。
+            kwargs["thinking"] = {"type": "disabled"}
 
         if self._fallbacks_ok:
             try:
@@ -139,7 +160,7 @@ class Brain:
                     **kwargs, betas=[FALLBACK_BETA], fallbacks="default"
                 ) as stream:
                     response = await stream.get_final_message()
-                return _extract(response)
+                return _extract(response), self._bill(response)
             except anthropic.BadRequestError as exc:
                 # 這個帳號／端點不吃 server-side fallback，關掉之後照常走。
                 log.warning("關閉 server-side fallback（%s）", exc)
@@ -147,7 +168,30 @@ class Brain:
 
         async with self.client.messages.stream(**kwargs) as stream:
             response = await stream.get_final_message()
-        return _extract(response)
+        return _extract(response), self._bill(response)
+
+
+    def _bill(self, response) -> float:
+        """把這次呼叫的 token 用量記到 log，並估一個美金數字出來。"""
+        u = response.usage
+        fresh = getattr(u, "input_tokens", 0) or 0
+        cached = getattr(u, "cache_read_input_tokens", 0) or 0
+        written = getattr(u, "cache_creation_input_tokens", 0) or 0
+        out = getattr(u, "output_tokens", 0) or 0
+
+        in_price, out_price = PRICES.get(self.cfg.model, (5.0, 25.0))
+        cost = (
+            fresh * in_price
+            + written * in_price * 1.25   # 寫進快取比較貴
+            + cached * in_price * 0.10    # 讀快取只要一折
+            + out * out_price
+        ) / 1_000_000
+
+        log.info(
+            "用量：輸入 %d（快取讀 %d／寫 %d）｜輸出 %d｜約 $%.4f",
+            fresh, cached, written, out, cost,
+        )
+        return cost
 
 
 def _extract(response) -> str:

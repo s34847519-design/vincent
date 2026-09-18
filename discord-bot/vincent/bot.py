@@ -90,7 +90,7 @@ class VincentClient(discord.Client):
         async with self._reply_lock:
             try:
                 async with channel.typing():
-                    reply = await self.brain.respond(
+                    reply, spent = await self.brain.respond(
                         await self.memory.recent(self.cfg.history_messages),
                         summary=await self.memory.summary_text(),
                         notes=await self.memory.notes_text(),
@@ -109,6 +109,7 @@ class VincentClient(discord.Client):
                 return
 
             await self.memory.add("assistant", reply)
+            await self._record_spend(spent)
             await self._send(channel, reply)
 
         await self._compress_if_needed()
@@ -123,7 +124,7 @@ class VincentClient(discord.Client):
         async with self._reply_lock:
             try:
                 async with channel.typing():
-                    opener = await self.brain.open_up(
+                    opener, spent = await self.brain.open_up(
                         await self.memory.recent(self.cfg.history_messages),
                         summary=await self.memory.summary_text(),
                         notes=await self.memory.notes_text(),
@@ -138,6 +139,7 @@ class VincentClient(discord.Client):
                 return
 
             await self.memory.add("assistant", opener, initiated=True)
+            await self._record_spend(spent)
             await self._send(channel, opener)
 
     async def _send(self, channel: discord.abc.Messageable, text: str) -> None:
@@ -177,6 +179,9 @@ class VincentClient(discord.Client):
                 hour=0, minute=0, second=0, microsecond=0
             )
             today = await self.memory.initiated_count_since(midnight)
+            day = midnight.strftime("%Y-%m-%d")
+            spent_today = await self.memory.get_state(f"spend:{day}", 0.0) or 0.0
+            spent_all = await self.memory.get_state("spend:total", 0.0) or 0.0
             await message.channel.send(
                 "```\n"
                 f"訊息    {stats['messages']} 則（其中他主動 {stats['initiated']} 則）\n"
@@ -184,7 +189,9 @@ class VincentClient(discord.Client):
                 f"摘要    {stats['summaries']} 份\n"
                 f"筆記    {stats['notes']} 條\n"
                 f"起算    {stats['since'] or '（還沒開始）'}\n"
-                f"模型    {self.cfg.model}（effort={self.cfg.effort}）\n"
+                f"模型    {self.cfg.model}（effort={self.cfg.effort}，"
+                f"思考={'開' if self.cfg.thinking != 'off' else '關'}）\n"
+                f"花費    今天約 ${spent_today:.3f}／累計約 ${spent_all:.3f} USD（估算）\n"
                 "```"
             )
 
@@ -205,11 +212,18 @@ class VincentClient(discord.Client):
             return
         log.info("把 %d 則舊訊息壓進長期摘要", len(batch))
         try:
-            merged = await self.brain.compress(await self.memory.summary_text(), batch)
+            merged, spent = await self.brain.compress(
+                await self.memory.summary_text(), batch
+            )
         except Exception:
             log.exception("壓縮摘要失敗，這批先留著，下次再試")
             return
         await self.memory.add_summary(upto, merged)
+        await self._record_spend(spent)
+
+    async def _record_spend(self, amount: float) -> None:
+        day = datetime.now(self.cfg.tz).strftime("%Y-%m-%d")
+        await self.memory.add_spend(day, amount)
 
 
 def _clean(message: discord.Message, me) -> str:

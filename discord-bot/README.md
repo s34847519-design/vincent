@@ -200,18 +200,43 @@ VINCENT_WINDOWS=08:00-10:30@0.55,13:00-15:30@0.35,21:00-23:30@0.75
 
 ## 費用
 
-用 `claude-opus-5`（`$5 / $25` 每百萬 token）。粗估，**這是推估不是帳單**：
+**思考 token 是這裡最大的一筆開銷，而且帳單上看不出來。**
 
-- 一次來回：輸入約 2–5k token（人格 + 摘要 + 最近對話，其中人格那塊吃 prompt cache
-  只算一折），輸出約 1–2k token
-- 大約 **每則 0.03–0.06 美金**
-- 一天聊 30 則 ≈ **1–2 美金/天**
+Claude Opus 5 預設會思考，思考產生的 token 按**輸出價**計費（$25/百萬）。
+一則回覆可能只有 600 個字的輸出，卻先想了 7000 個 token——帳單只看到「輸出 8000」。
 
-想壓成本：`VINCENT_EFFORT=low`（省思考 token，語感掉一點）、
-`VINCENT_HISTORY=30`（少帶點歷史）、或 `VINCENT_MODEL=claude-sonnet-5`（約五分之一價，
-文筆會不一樣）。要不要換是你的事，我沒有替你決定。
+實測對照（Opus 5，$5 / $25 每百萬）：
 
----
+| 情況 | 用量 | 一則約 |
+|---|---|---|
+| `VINCENT_THINKING=off` | 2000 in / 600 out | **$0.025** |
+| `VINCENT_THINKING=adaptive` + `effort=medium` | 2000 in / 8000 out | **$0.21** |
+| 同上但換 `claude-sonnet-5` | 2000 in / 600 out | $0.010 |
+
+**所以預設是 `VINCENT_THINKING=off` 加 `VINCENT_EFFORT=low`。**
+聊天不是解數學題，思考那一段幾乎全浪費。想要更細緻的文筆再開回 `adaptive`，
+但要知道那是十倍價。
+
+省錢的順序（由大到小）：
+
+1. `VINCENT_THINKING=off` — 影響最大
+2. `VINCENT_EFFORT=low` — 次之
+3. `VINCENT_MODEL=claude-sonnet-5` — 單價降到五分之二，文筆會不一樣
+4. `VINCENT_HISTORY=30` — 少帶點歷史，只省輸入那側，影響最小
+
+人格那塊掛了 1 小時的 prompt cache，同一小時內再聊，那段只算一折。
+
+### 自己看，不要猜
+
+每次呼叫都會在 log 印一行：
+
+```
+用量：輸入 2013（快取讀 1580／寫 0）｜輸出 642｜約 $0.0251
+```
+
+Discord 裡傳 `!狀態` 也看得到今天和累計花了多少。
+
+這些都是**估算**——照公開單價乘出來的，帳單一律以 Anthropic console 為準。
 
 ## 出事的時候
 

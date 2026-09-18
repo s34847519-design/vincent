@@ -114,6 +114,24 @@ class Memory:
 
         await self._run(work)
 
+    async def add_spend(self, day: str, amount: float) -> None:
+        """把一次呼叫的估算花費累加到當天，並累加到總額。"""
+
+        def work() -> None:
+            with self._connect() as conn:
+                for key in (f"spend:{day}", "spend:total"):
+                    row = conn.execute(
+                        "SELECT value FROM state WHERE key = ?", (key,)
+                    ).fetchone()
+                    current = json.loads(row["value"]) if row else 0.0
+                    conn.execute(
+                        "INSERT INTO state (key, value) VALUES (?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, json.dumps(round(current + amount, 6))),
+                    )
+
+        await self._run(work)
+
     # ── 讀取 ──────────────────────────────────────────
 
     async def get_state(self, key: str, default=None):
