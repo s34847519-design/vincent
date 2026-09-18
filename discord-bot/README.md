@@ -103,6 +103,32 @@ python run.py
 Windows 另外會裝一個 `tzdata`——Windows 沒有系統時區資料庫，
 少了它 `zoneinfo` 找不到 `Asia/Taipei`，開機就會掛。requirements 裡已經帶了。
 
+### Python 版本：3.12 最穩
+
+| 版本 | 能不能跑 |
+|---|---|
+| 3.9 以下 | **不行**，`anthropic` 和 `python-dotenv` 都要 >=3.10 |
+| 3.10 – 3.12 | 可以，**3.12 是建議值**（discord.py 2.7 官方支援標到 3.12） |
+| 3.13 / 3.14 | 可以，但要多裝 `audioop-lts`（requirements 已自動處理，見下） |
+
+3.13 把 `audioop` 移出標準庫，而 `discord/__init__.py` 會 `from .player import *`，
+`player.py` 第 30 行又無條件 `import audioop`——所以在 3.13+ 上光是 `import discord`
+就會 `ModuleNotFoundError: No module named 'audioop'`。
+requirements 裡用版本條件掛了 `audioop-lts` 補回來（它有 cp313-abi3 wheel，3.14 通用）。
+
+### Windows 上有多個 Python 的時候
+
+新版 Python Install Manager 裝完，舊的 Python 可能還排在 PATH 前面。
+與其跟 PATH 搏鬥，不如指定版本跑：
+
+```powershell
+py install 3.12                              # 裝一個 3.12
+py -V:3.12 -m pip install -r requirements.txt
+py -V:3.12 run.py
+```
+
+`py -V:3.12` 是「用 3.12 這個直譯器」，不管 `python` 目前指向誰。
+
 看到 `已上線：...` 就可以私訊它了。
 
 ### Docker（推薦長期跑）
@@ -198,6 +224,7 @@ VINCENT_WINDOWS=08:00-10:30@0.55,13:00-15:30@0.35,21:00-23:30@0.75
 | 重開之後失憶 | `VINCENT_DB` 指到的檔案沒有持久化（Docker 要掛 volume） |
 | `pip install` 失敗、說找不到符合的版本 | Python 太舊。要 3.10 以上，`python --version` 確認 |
 | `ZoneInfoNotFoundError: Asia/Taipei` | Windows 少了時區資料庫，`pip install tzdata` |
+| `ModuleNotFoundError: No module named 'audioop'` | Python 3.13+ 的已知問題，`pip install audioop-lts`，或改用 3.12 |
 
 ---
 
