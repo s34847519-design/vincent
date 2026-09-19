@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,10 @@ log = logging.getLogger("vincent.bot")
 
 # 她常常一口氣丟好幾則。等她停下來再回，不要一則一則追著答。
 DEBOUNCE_SECONDS = 3.0
+
+# Claude 看得懂的圖片格式
+VISION_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 HELP = """\
 ```
@@ -46,6 +52,7 @@ class VincentClient(discord.Client):
 
         self._reply_lock = asyncio.Lock()
         self._debounce: asyncio.Task | None = None
+        self._pending_images: list[dict] = []
         self._initiative_task: asyncio.Task | None = None
         self._channel: discord.abc.Messageable | None = None
 
@@ -108,10 +115,38 @@ class VincentClient(discord.Client):
             return
 
         await self.memory.add("user", text)
+        if self.cfg.vision:
+            self._pending_images.extend(await self._download_images(message))
 
         if self._debounce and not self._debounce.done():
             self._debounce.cancel()
         self._debounce = asyncio.create_task(self._respond_after_pause(message.channel))
+
+    async def _download_images(self, message: discord.Message) -> list[dict]:
+        """把她傳的圖抓下來轉 base64。太大的略過——與其讓整則失敗，不如少看一張。"""
+        out: list[dict] = []
+        for attachment in message.attachments:
+            if len(out) >= self.cfg.max_images:
+                break
+            if not _is_image(attachment):
+                continue
+            if attachment.size > MAX_IMAGE_BYTES:
+                log.info("圖片 %s 太大（%.1f MB），略過", attachment.filename,
+                         attachment.size / 1_048_576)
+                continue
+            try:
+                raw = await attachment.read()
+            except discord.DiscordException:
+                log.exception("讀取圖片 %s 失敗", attachment.filename)
+                continue
+            ctype = (attachment.content_type or "image/png").split(";")[0].strip()
+            out.append({
+                "media_type": "image/jpeg" if ctype == "image/jpg" else ctype,
+                "data": base64.standard_b64encode(raw).decode("ascii"),
+            })
+        if out:
+            log.info("帶上 %d 張圖片給他看", len(out))
+        return out
 
     # ── 回應 ──────────────────────────────────────────
 
@@ -126,11 +161,13 @@ class VincentClient(discord.Client):
         async with self._reply_lock:
             try:
                 async with channel.typing():
+                    images, self._pending_images = self._pending_images, []
                     reply, spent = await self.brain.respond(
                         await self.memory.recent(self.cfg.history_messages),
                         summary=await self.memory.summary_text(),
                         notes=await self.memory.notes_text(),
                         now=datetime.now(self.cfg.tz),
+                        images=images,
                     )
             except RefusedError as exc:
                 log.warning("回覆被擋下：%s", exc.category)
@@ -262,11 +299,50 @@ class VincentClient(discord.Client):
         await self.memory.add_spend(day, amount)
 
 
+CUSTOM_EMOJI = re.compile(r"<a?:(\w+):\d+>")
+
+
 def _clean(message: discord.Message, me) -> str:
+    """把一則 Discord 訊息壓成他讀得懂的純文字。
+
+    貼圖、自訂表情、附檔都不在 content 裡（或是以原始碼的形式在裡面），
+    不翻譯的話他要嘛看到亂碼，要嘛整則訊息是空的、直接被吞掉。
+    """
     text = message.content or ""
     if me is not None:
         text = text.replace(f"<@{me.id}>", "").replace(f"<@!{me.id}>", "")
-    if message.attachments:
-        names = "、".join(a.filename for a in message.attachments)
-        text += f"\n（她附了檔案：{names}——你看不到內容，要知道就問她。）"
-    return text.strip()
+
+    # <:catcry:12345> -> :catcry:　名字才是意思所在
+    text = CUSTOM_EMOJI.sub(r":\1:", text)
+
+    prefix = ""
+    ref = message.reference
+    quoted = getattr(ref, "resolved", None) if ref is not None else None
+    if isinstance(quoted, discord.Message) and quoted.content:
+        snippet = quoted.content[:200].replace("\n", " ")
+        prefix = f"（她回的是這句：「{snippet}」）\n"
+
+    extras: list[str] = []
+
+    # 貼圖完全不在 content 裡。名字就是它的意思，至少要讓他知道有這回事。
+    if message.stickers:
+        names = "、".join(s.name for s in message.stickers)
+        extras.append(f"（她傳了貼圖：{names}）")
+
+    images = [a for a in message.attachments if _is_image(a)]
+    others = [a for a in message.attachments if not _is_image(a)]
+    if images:
+        extras.append(f"（她傳了圖片：{'、'.join(a.filename for a in images)}）")
+    if others:
+        extras.append(
+            f"（她附了檔案：{'、'.join(a.filename for a in others)}"
+            "——你看不到內容，要知道就問她。）"
+        )
+
+    body = "\n".join(filter(None, [prefix + text.strip(), *extras]))
+    return body.strip()
+
+
+def _is_image(attachment: discord.Attachment) -> bool:
+    ctype = (attachment.content_type or "").lower()
+    return ctype.startswith("image/") and ctype.split("/")[-1] in VISION_TYPES

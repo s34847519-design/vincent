@@ -68,11 +68,18 @@ class Brain:
         summary: str,
         notes: str,
         now: datetime,
+        images: list[dict] | None = None,
     ) -> tuple[str, float]:
-        """history 的最後一則就是她剛說的話（已經寫進記憶了）。回 (回覆, 花費美金)。"""
+        """history 的最後一則就是她剛說的話（已經寫進記憶了）。回 (回覆, 花費美金)。
+
+        images 是這一輪她剛傳的圖，只掛在這次呼叫上——記憶裡只留文字描述，
+        不把圖一路往後帶（省錢，也省 SQLite）。
+        """
         messages = _to_api(history)
         if not messages:
             raise EmptyHistoryError()
+        if images:
+            _attach_images(messages, images)
         if messages[-1]["role"] != "user":
             # 理論上不會發生；補一個空的推進，讓 API 有東西可回。
             _append_user(messages, "<系統提示>她剛剛傳了訊息但內容沒有存下來，照常回應她。</系統提示>")
@@ -221,6 +228,31 @@ def _to_api(history: list[Message]) -> list[dict]:
     while out and out[0]["role"] == "assistant":
         out.pop(0)
     return out
+
+
+def _attach_images(messages: list[dict], images: list[dict]) -> None:
+    """把圖片塞進最後一則使用者訊息，圖在前、文字在後（官方建議的順序）。"""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] != "user":
+            continue
+        content = messages[i]["content"]
+        blocks = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": img["media_type"],
+                    "data": img["data"],
+                },
+            }
+            for img in images
+        ]
+        if isinstance(content, str):
+            blocks.append({"type": "text", "text": content})
+        else:
+            blocks.extend(content)
+        messages[i]["content"] = blocks
+        return
 
 
 def _append_user(messages: list[dict], text: str) -> None:

@@ -69,6 +69,8 @@ class Config:
     effort: str
     thinking: str          # "adaptive"（會思考，貴）或 "off"（不思考，便宜）
     max_tokens: int
+    vision: bool           # 讓他真的看見圖片，不是只看到檔名
+    max_images: int
     use_fallbacks: bool
 
     db_path: str
@@ -112,6 +114,8 @@ class Config:
             effort=os.getenv("VINCENT_EFFORT", "medium").strip(),
             thinking=os.getenv("VINCENT_THINKING", "adaptive").strip().lower(),
             max_tokens=_int("VINCENT_MAX_TOKENS", 8000),
+            vision=_bool("VINCENT_VISION", True),
+            max_images=_int("VINCENT_MAX_IMAGES", 4),
             use_fallbacks=_bool("VINCENT_FALLBACKS", True),
             db_path=os.getenv("VINCENT_DB", "./data/vincent.db").strip(),
             history_messages=_int("VINCENT_HISTORY", 60),
