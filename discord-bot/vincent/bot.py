@@ -25,6 +25,7 @@ DEBOUNCE_SECONDS = 3.0
 # Claude 看得懂的圖片格式
 VISION_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+BACKUP_LIMIT_BYTES = 8 * 1024 * 1024   # Discord 免費帳號的附件上限抓保守一點
 
 HELP = """\
 ```
@@ -32,6 +33,7 @@ HELP = """\
 ```
 - `!記住 <一句話>` — 寫進長期筆記，之後每次對話都會帶上
 - `!狀態` — 看記憶存了多少、今天主動過幾次
+- `!備份` — 把記憶檔傳給你存著
 - `!主動` — 不等排程，現在就叫他開口（測試用）
 - `!幫忙` — 這張表
 
@@ -54,15 +56,19 @@ class VincentClient(discord.Client):
         self._debounce: asyncio.Task | None = None
         self._pending_images: list[dict] = []
         self._initiative_task: asyncio.Task | None = None
+        self._catchup_task: asyncio.Task | None = None
         self._channel: discord.abc.Messageable | None = None
 
     # ── 生命週期 ──────────────────────────────────────
 
     async def on_ready(self) -> None:
         log.info("已上線：%s（模型 %s，effort=%s）", self.user, self.cfg.model, self.cfg.effort)
+        log.info("只回應使用者 ID %s｜記憶檔 %s", self.cfg.owner_id, self.cfg.db_path)
         if self._initiative_task is None:
             self._initiative_task = asyncio.create_task(self.initiative.run_forever())
-        asyncio.create_task(self._catch_up())
+        # on_ready 每次重連都會觸發，不擋的話補讀會同時跑好幾份、重複寫入
+        if self._catchup_task is None or self._catchup_task.done():
+            self._catchup_task = asyncio.create_task(self._catch_up())
 
     async def _catch_up(self) -> None:
         """離線期間她傳的訊息，Discord 不會事後補送給機器人——自己回頭去讀。"""
@@ -101,17 +107,26 @@ class VincentClient(discord.Client):
         if message.author.id == getattr(self.user, "id", None):
             return
         if message.author.id != self.cfg.owner_id:
+            # OWNER_ID 填錯的話他會像聾了一樣，而且毫無線索——留一行。
+            log.info(
+                "忽略來自 %s（ID %s）的訊息；只回應 VINCENT_OWNER_ID=%s",
+                message.author, message.author.id, self.cfg.owner_id,
+            )
             return
         if not isinstance(message.channel, discord.DMChannel) and self.user not in message.mentions:
             return
 
         self._channel = message.channel
-        text = _clean(message, self.user)
-        if not text:
+
+        # 指令看原始內容判斷。_clean 會在前面加上「她回的是這句…」，
+        # 用清理後的字串判斷的話，對著某則訊息回 !狀態 會被當成一般聊天。
+        raw = (message.content or "").strip()
+        if raw.startswith("!"):
+            await self._command(message, raw)
             return
 
-        if text.startswith("!"):
-            await self._command(message, text)
+        text = _clean(message, self.user)
+        if not text:
             return
 
         await self.memory.add("user", text)
@@ -181,9 +196,15 @@ class VincentClient(discord.Client):
                 await channel.send("```\n（我這邊斷線了，等一下再說。）\n```")
                 return
 
-            await self.memory.add("assistant", reply)
             await self._record_spend(spent)
-            await self._send(channel, reply)
+            # 先送出、送成功才記。反過來的話，一旦送出失敗或這個 task 被取消，
+            # 他會「記得」自己說過一句她從來沒看到的話——那比漏一句更糟。
+            try:
+                await self._send(channel, reply)
+            except discord.DiscordException:
+                log.exception("訊息送不出去，這則不寫進記憶")
+                return
+            await self.memory.add("assistant", reply)
 
         await self._compress_if_needed()
 
@@ -211,9 +232,13 @@ class VincentClient(discord.Client):
                 log.exception("主動開口失敗")
                 return
 
-            await self.memory.add("assistant", opener, initiated=True)
             await self._record_spend(spent)
-            await self._send(channel, opener)
+            try:
+                await self._send(channel, opener)
+            except discord.DiscordException:
+                log.exception("主動訊息送不出去，這則不寫進記憶")
+                return
+            await self.memory.add("assistant", opener, initiated=True)
 
     async def _send(self, channel: discord.abc.Messageable, text: str) -> None:
         pieces = chunker.split(text)
@@ -268,6 +293,9 @@ class VincentClient(discord.Client):
                 "```"
             )
 
+        elif head in {"!備份", "!backup"}:
+            await self._backup(message.channel)
+
         elif head in {"!主動", "!poke"}:
             await self._speak_first()
 
@@ -276,6 +304,25 @@ class VincentClient(discord.Client):
 
         else:
             await message.channel.send("沒有這個指令。`!幫忙` 看一下。")
+
+    async def _backup(self, channel: discord.abc.Messageable) -> None:
+        """把記憶檔本身丟給她。單一 SQLite 檔案，機器壞了就沒了。"""
+        path = Path(self.cfg.db_path)
+        if not path.exists():
+            await channel.send("```\n還沒有記憶檔。\n```")
+            return
+        size = path.stat().st_size
+        if size > BACKUP_LIMIT_BYTES:
+            await channel.send(
+                f"```\n記憶檔 {size / 1_048_576:.1f} MB，超過 Discord 上傳上限。\n"
+                f"自己去拿：{path}\n```"
+            )
+            return
+        async with self._reply_lock:  # 等手上那則寫完再複製，不要抓到寫到一半的檔
+            await channel.send(
+                f"```\n記憶備份 · {size / 1024:.0f} KB\n```",
+                file=discord.File(path, filename=f"vincent-{datetime.now(self.cfg.tz):%Y%m%d-%H%M}.db"),
+            )
 
     # ── 記憶壓縮 ──────────────────────────────────────
 
