@@ -236,8 +236,12 @@ class Memory:
 
     # ── 壓縮 ──────────────────────────────────────────
 
-    async def overflow(self, keep: int) -> tuple[list[Message], int]:
-        """回傳「超出保留視窗、該被壓成摘要」的那批訊息，以及它的最後一個 id。"""
+    async def overflow(self, keep: int, batch: int) -> tuple[list[Message], int]:
+        """回傳該被壓成摘要的那批訊息，以及它的最後一個 id。
+
+        攢到 batch 則才動手。一則一則壓的話，每講一句話就要把整份摘要重寫一次——
+        既多付一次 API 錢，又讓摘要多經歷一次轉述，失真疊加得特別快。
+        """
 
         def work() -> tuple[list[Message], int]:
             with self._connect() as conn:
@@ -248,7 +252,7 @@ class Memory:
                     "SELECT COUNT(*) AS n FROM messages WHERE id > ?", (floor,)
                 ).fetchone()["n"]
                 excess = live - keep
-                if excess <= 0:
+                if excess < batch:
                     return [], 0
                 rows = conn.execute(
                     "SELECT * FROM messages WHERE id > ? ORDER BY id ASC LIMIT ?",

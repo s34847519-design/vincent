@@ -335,7 +335,9 @@ class VincentClient(discord.Client):
     # ── 記憶壓縮 ──────────────────────────────────────
 
     async def _compress_if_needed(self) -> None:
-        batch, upto = await self.memory.overflow(self.cfg.history_messages)
+        batch, upto = await self.memory.overflow(
+            self.cfg.history_messages, self.cfg.compress_batch
+        )
         if not batch:
             return
         log.info("把 %d 則舊訊息壓進長期摘要", len(batch))

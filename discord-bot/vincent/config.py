@@ -75,6 +75,7 @@ class Config:
 
     db_path: str
     history_messages: int
+    compress_batch: int    # 攢到幾則才壓縮一次
 
     tz: ZoneInfo
     initiative_enabled: bool
@@ -119,6 +120,7 @@ class Config:
             use_fallbacks=_bool("VINCENT_FALLBACKS", True),
             db_path=os.getenv("VINCENT_DB", "./data/vincent.db").strip(),
             history_messages=_int("VINCENT_HISTORY", 60),
+            compress_batch=_int("VINCENT_COMPRESS_BATCH", 20),
             tz=ZoneInfo(os.getenv("VINCENT_TZ", "Asia/Taipei").strip()),
             initiative_enabled=_bool("VINCENT_INITIATIVE", True),
             windows=_parse_windows(

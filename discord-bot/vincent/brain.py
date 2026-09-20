@@ -80,6 +80,8 @@ class Brain:
             raise EmptyHistoryError()
         if images:
             _attach_images(messages, images)
+        _stamp_time(messages, now)
+        _mark_cache(messages)
         if messages[-1]["role"] != "user":
             # 理論上不會發生；補一個空的推進，讓 API 有東西可回。
             _append_user(messages, "<系統提示>她剛剛傳了訊息但內容沒有存下來，照常回應她。</系統提示>")
@@ -99,6 +101,8 @@ class Brain:
             directive = directive.replace("</系統提示>", f"{extra}\n</系統提示>")
         messages = _to_api(history)
         _append_user(messages, directive)
+        _stamp_time(messages, now)
+        _mark_cache(messages)
         return await self._call(messages, summary=summary, notes=notes, now=now)
 
     async def compress(self, previous: str, batch: list[Message]) -> tuple[str, float]:
@@ -139,12 +143,15 @@ class Brain:
             }
         ]
 
-        state = [f"現在時間：{now:%Y-%m-%d %H:%M}（{_weekday(now)}）"]
+        # 這裡不放「現在時間」。system 排在 messages 前面，每分鐘變一次的話
+        # 後面整段對話的快取會被連帶作廢——時間改掛在最後一則訊息的尾巴。
+        state: list[str] = []
         if summary:
             state.append(f"\n## 更早以前的對話摘要\n\n{summary}")
         if notes:
             state.append(f"\n## 她要你記住的事\n\n{notes}")
-        blocks.append({"type": "text", "text": "\n".join(state)})
+        if state:
+            blocks.append({"type": "text", "text": "\n".join(state)})
         return blocks
 
     async def _call(
@@ -228,6 +235,46 @@ def _to_api(history: list[Message]) -> list[dict]:
     while out and out[0]["role"] == "assistant":
         out.pop(0)
     return out
+
+
+def _stamp_time(messages: list[dict], now: datetime) -> None:
+    """把現在時間掛在最後一則訊息的尾巴。
+
+    放這裡而不是 system，是因為 system render 在 messages 之前——
+    每分鐘變一次的時間戳會讓整段對話的快取每次都失效。
+    """
+    if not messages:
+        return
+    stamp = {
+        "type": "text",
+        "text": f"<系統提示>現在時間：{now:%Y-%m-%d %H:%M}（{_weekday(now)}）</系統提示>",
+    }
+    content = messages[-1]["content"]
+    if isinstance(content, str):
+        messages[-1]["content"] = [{"type": "text", "text": content}, stamp]
+    else:
+        content.append(stamp)
+
+
+def _mark_cache(messages: list[dict]) -> None:
+    """在最後一則「他的話」上打快取斷點。
+
+    那之前的東西（人格、摘要、整段歷史）下一輪原封不動，可以用一折的價格讀回來；
+    斷點之後才是這一輪的新內容。對話越長，這個斷點省越多。
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] != "assistant":
+            continue
+        content = messages[i]["content"]
+        if isinstance(content, str):
+            messages[i]["content"] = [{
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
+            }]
+        else:
+            content[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+        return
 
 
 def _attach_images(messages: list[dict], images: list[dict]) -> None:
