@@ -22,6 +22,10 @@ log = logging.getLogger("vincent.bot")
 # 她常常一口氣丟好幾則。等她停下來再回，不要一則一則追著答。
 DEBOUNCE_SECONDS = 3.0
 
+# 中文輸入法打出來的是全形驚嘆號和全形空格。使用者不會為了下指令去切輸入法，
+# 所以在這裡就把它們正規化掉，不要讓指令悄悄變成一則要付錢的閒聊。
+FULLWIDTH = str.maketrans({"！": "!", "　": " "})
+
 # Claude 看得懂的圖片格式
 VISION_TYPES = {"jpeg", "jpg", "png", "gif", "webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -36,6 +40,8 @@ HELP = """\
 - `!備份` — 把記憶檔傳給你存著
 - `!主動` — 不等排程，現在就叫他開口（測試用）
 - `!幫忙` — 這張表
+
+全形驚嘆號也認（`！狀態` 跟 `!狀態` 一樣）。
 
 其他時候直接說話就好。"""
 
@@ -88,7 +94,7 @@ class VincentClient(discord.Client):
                 if msg.author.id != self.cfg.owner_id:
                     continue
                 text = _clean(msg, self.user)
-                if text and not text.startswith("!"):
+                if text and not text.translate(FULLWIDTH).startswith("!"):
                     missed.append(text)
         except discord.DiscordException:
             log.exception("回頭讀離線期間的訊息失敗")
@@ -120,7 +126,7 @@ class VincentClient(discord.Client):
 
         # 指令看原始內容判斷。_clean 會在前面加上「她回的是這句…」，
         # 用清理後的字串判斷的話，對著某則訊息回 !狀態 會被當成一般聊天。
-        raw = (message.content or "").strip()
+        raw = (message.content or "").strip().translate(FULLWIDTH)
         if raw.startswith("!"):
             await self._command(message, raw)
             return
@@ -303,7 +309,9 @@ class VincentClient(discord.Client):
             await message.channel.send(HELP)
 
         else:
-            await message.channel.send("沒有這個指令。`!幫忙` 看一下。")
+            await message.channel.send(
+                f"沒有 `{head}` 這個指令。`!幫忙` 看一下有哪些。"
+            )
 
     async def _backup(self, channel: discord.abc.Messageable) -> None:
         """把記憶檔本身丟給她。單一 SQLite 檔案，機器壞了就沒了。"""
